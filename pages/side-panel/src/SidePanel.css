@@ -4,6 +4,7 @@
   --bg-surface: #ffffff;
   --bg-elevated: #dedede;
   --bg-muted: #f2f2f2;
+  --bg-user: #e5e5e5;
   --text-primary: #080808;
   --text-secondary: #525252;
   --text-muted: #737373;
@@ -27,6 +28,7 @@
     --bg-surface: #0d0d0d;
     --bg-elevated: #1a1a1a;
     --bg-muted: #0d0d0d;
+    --bg-user: #1a1a1a;
     --text-primary: #fafafa;
     --text-secondary: #b8b8b8;
     --text-muted: #737373;

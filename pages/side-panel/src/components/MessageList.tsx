@@ -63,10 +63,10 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
             className={`whitespace-pre-wrap break-words text-sm ${isUser ? 'px-3 py-2' : ''}`}
             style={{
               color: 'var(--text-secondary)',
-              ...(isUser ? { backgroundColor: 'var(--bg-user-bubble)' } : {}),
+              ...(isUser ? { backgroundColor: 'var(--bg-user)' } : {}),
             }}>
             {isProgress ? (
-              <div className="h-1 overflow-hidden rounded" style={{ backgroundColor: 'var(--bg-muted)' }}>
+              <div className="h-1 overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
                 <div className="h-full animate-progress" style={{ backgroundColor: 'var(--accent)' }} />
               </div>
             ) : (

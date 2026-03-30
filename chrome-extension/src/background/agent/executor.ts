@@ -26,6 +26,7 @@ import type { AgentStepHistory } from './history';
 import type { GeneralSettingsConfig } from '@extension/storage';
 import { analytics } from '../services/analytics';
 import { vetoGuard } from '../services/veto';
+import { localPolicyEvaluator } from '../services/localPolicyEvaluator';
 
 const logger = createLogger('Executor');
 
@@ -136,9 +137,11 @@ export class Executor {
     try {
       this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_START, this.context.taskId);
 
-      // Reset Veto session counter for each new task
+      // Reset policy session counters for each new task
       vetoGuard.resetSession();
       void vetoGuard.refreshConfig();
+      localPolicyEvaluator.resetSession();
+      void localPolicyEvaluator.refreshConfig();
 
       // Track task start
       void analytics.trackTaskStart(this.context.taskId);

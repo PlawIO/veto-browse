@@ -29,6 +29,7 @@ import { ExecutionState, Actors } from '../event/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { wrapUntrustedContent } from '../messages/utils';
 import { vetoGuard } from '@src/background/services/veto';
+import { localPolicyEvaluator } from '@src/background/services/localPolicyEvaluator';
 
 const logger = createLogger('Action');
 
@@ -61,7 +62,9 @@ export class Action {
       Object.keys((schema as z.ZodObject<Record<string, z.ZodTypeAny>>).shape || {}).length === 0;
 
     if (isEmptySchema) {
-      // Veto check for no-arg actions
+      // Local policy check → Veto server check → execute
+      const localResult = await this._localPolicyCheck({}, currentUrl);
+      if (localResult) return localResult;
       const vetoResult = await this._vetoCheck({}, currentUrl, pageTitle);
       if (vetoResult) return vetoResult;
       return await this.handler({});
@@ -73,7 +76,9 @@ export class Action {
       throw new InvalidInputError(errorMessage);
     }
 
-    // Veto pre-execution guard — validate before running the action
+    // Local policy check (fast, in-process) → Veto server check → execute
+    const localResult = await this._localPolicyCheck(parsedArgs.data, currentUrl);
+    if (localResult) return localResult;
     const vetoResult = await this._vetoCheck(parsedArgs.data, currentUrl, pageTitle);
     if (vetoResult) return vetoResult;
 
@@ -102,6 +107,27 @@ export class Action {
     } catch (error) {
       // If Veto check itself fails, log and allow (fail-open behavior handled inside vetoGuard)
       logger.error(`Veto check error: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Check action against local policies. Returns an ActionResult if blocked, null if allowed.
+   */
+  private async _localPolicyCheck(args: unknown, currentUrl?: string): Promise<ActionResult | null> {
+    try {
+      // Always allow "done" — can't block task completion
+      if (this.schema.name === 'done') return null;
+
+      const decision = await localPolicyEvaluator.evaluate(this.schema.name, args, currentUrl);
+      if (decision.allowed) return null;
+
+      return new ActionResult({
+        error: `[Policy] ${decision.reason}`,
+        includeInMemory: true,
+      });
+    } catch (error) {
+      logger.error(`Local policy check error: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

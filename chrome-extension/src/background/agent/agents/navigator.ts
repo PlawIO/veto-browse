@@ -304,15 +304,22 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
             messageManager.addMessageWithTokens(msg);
           }
           if (r.error) {
-            // Get error text and convert to string
-            const errorText = r.error.toString().trim();
-
-            // Get only the last line of the error
-            const lastLine = errorText.split('\n').pop() || '';
-
-            const msg = new HumanMessage(`Action error: ${lastLine}`);
-            logger.info('Adding action error to memory', msg.content);
-            messageManager.addMessageWithTokens(msg);
+            if (r.policyBlocked) {
+              const reason = r.error.replace(/^\[Veto POLICY BLOCK\]\s*/i, '');
+              const msg = new HumanMessage(
+                `[POLICY BLOCK] The user's Veto policy blocked this action. Reason: "${reason}". ` +
+                  'This block is contextual — the same action type may succeed with different arguments or on different elements. ' +
+                  'Adapt: skip what the policy blocks, continue with what is allowed.',
+              );
+              logger.info('Policy block recorded in agent memory', reason);
+              messageManager.addMessageWithTokens(msg);
+            } else {
+              const errorText = r.error.toString().trim();
+              const lastLine = errorText.split('\n').pop() || '';
+              const msg = new HumanMessage(`Action error: ${lastLine}`);
+              logger.info('Adding action error to memory', msg.content);
+              messageManager.addMessageWithTokens(msg);
+            }
           }
           // reset this action result to empty, we dont want to add it again in the state message
           // NOTE: in python version, all action results are reset to empty, but in ts version, only those included in memory are reset to empty
@@ -477,6 +484,10 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
           }
         }
         results.push(result);
+
+        if (result.policyBlocked) {
+          break;
+        }
 
         if (this.context.paused || this.context.stopped) {
           return results;

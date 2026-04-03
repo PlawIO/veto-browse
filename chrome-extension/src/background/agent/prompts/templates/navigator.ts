@@ -128,5 +128,11 @@ Common action sequences:
 - Plan is a json string wrapped by the <plan> tag
 - If a plan is provided, follow the instructions in the next_steps exactly first
 - If no plan is provided, just continue with the task
+
+13. Policy Blocks (Veto):
+
+- If you see a [POLICY BLOCK] message in the action results, the user has a standing policy that blocked this specific action with these specific arguments.
+- Read the policy reason carefully. The block is contextual — the same action type may succeed with different arguments or on different elements that don't violate the policy.
+- Adapt your approach: skip what the policy blocks, continue with what is allowed, and report what you could not do and why in your final answer.
 </system_instructions>
 `;

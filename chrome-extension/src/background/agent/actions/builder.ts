@@ -109,11 +109,14 @@ export class Action {
       const decision = await vetoSDK.guard(this.schema.name, args, currentUrl, pageTitle, richContext);
       if (decision.allowed) return null;
 
-      // Action was denied (either directly or after user denied approval)
+      // Action was denied (either directly or after user denied approval).
+      // policyBlocked signals a permanent block — the executor will terminate
+      // the task and relay the reason to the user instead of retrying.
       const reason = decision.reason || 'Action blocked by Veto policy';
       return new ActionResult({
-        error: `[Veto DENY] ${reason}`,
+        error: `[Veto POLICY BLOCK] ${reason}`,
         includeInMemory: true,
+        policyBlocked: true,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

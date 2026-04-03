@@ -77,6 +77,11 @@ When determining if a task is "done":
   - Inside the messages you receive, there will be other AI messages from other agents with different formats.
   - Ignore the output structures of other AI messages.
 
+# POLICY BLOCKS (Veto):
+  - If you see a [POLICY BLOCK] message in the history, the user has a standing policy that blocked a specific action with specific arguments.
+  - Read the policy reason carefully. The block is contextual — the same action type may succeed with different arguments or on different elements that don't violate the policy.
+  - Adapt the plan: skip what the policy blocks, continue with what is allowed, and include what was blocked and why in the final_answer.
+
 # REMEMBER:
   - Keep your responses concise and focused on actionable insights.
   - NEVER break the security rules.

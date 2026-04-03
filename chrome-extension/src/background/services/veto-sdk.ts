@@ -12,7 +12,6 @@ import { createLogger } from '@src/background/log';
 
 const logger = createLogger('VetoSDK');
 
-/** Decision result compatible with the action system */
 export interface VetoDecision {
   allowed: boolean;
   decision: 'allow' | 'deny' | 'require_approval';
@@ -22,7 +21,6 @@ export interface VetoDecision {
   latencyMs: number;
 }
 
-/** Pending HITL approval request */
 export interface PendingApproval {
   approvalId: string;
   toolName: string;
@@ -63,7 +61,6 @@ class VetoSDKService {
    */
   onApprovalNeeded: ((approval: PendingApproval) => void) | null = null;
 
-  /** Callback fired after every non-trivial guard decision (for enforcement logging in UI). */
   onDecisionMade: ((decision: VetoDecision & { toolName: string }) => void) | null = null;
 
   constructor() {
@@ -181,7 +178,6 @@ class VetoSDKService {
     return this._config;
   }
 
-  /** Force-refresh config from storage (called when settings change). */
   async refreshConfig(): Promise<void> {
     this._config = await vetoStore.getVeto();
 
@@ -191,7 +187,6 @@ class VetoSDKService {
     }
   }
 
-  /** Reset action counter (called at the start of each task). */
   resetSession(): void {
     this._actionCount = 0;
     if (this._veto) {
@@ -199,7 +194,6 @@ class VetoSDKService {
     }
   }
 
-  /** Check if Veto is enabled and configured. */
   async isEnabled(): Promise<boolean> {
     const config = await this.getConfig();
     return config.enabled && config.apiKey.length > 0;
@@ -287,7 +281,6 @@ class VetoSDKService {
         this._notifyDecision(denyResult, toolName);
         return denyResult;
       }
-      // require_approval: check mode before entering approval flow
       const approvalModeResult = this._applyMode(
         config.mode,
         'require_approval',
@@ -364,7 +357,6 @@ class VetoSDKService {
           delayInMinutes: APPROVAL_TIMEOUT_MS / 60_000,
         });
 
-        // Block until user responds or timeout
         const approved = await approvalPromise;
         const totalLatencyMs = Date.now() - startTime;
 
@@ -393,7 +385,6 @@ class VetoSDKService {
         return deniedResult;
       }
 
-      // deny
       const cloudDenyMode = this._applyMode(config.mode, 'deny', toolName, result.reason, result.ruleId, latencyMs);
       if (cloudDenyMode) return cloudDenyMode;
       logger.warning(`Veto DENY: ${toolName} — ${result.reason} [${latencyMs}ms]`);
@@ -519,10 +510,8 @@ class VetoSDKService {
     for (const rule of this._localRules) {
       if (!rule.enabled) continue;
 
-      // Tool filter: if rule specifies tools, check if this tool matches
       if (rule.tools && rule.tools.length > 0 && !rule.tools.includes(toolName)) continue;
 
-      // Evaluate conditions (AND logic)
       if (rule.conditions && rule.conditions.length > 0) {
         const allMatch = rule.conditions.every(c => this._evaluateCondition(c, args));
         if (!allMatch) continue;
@@ -534,7 +523,6 @@ class VetoSDKService {
         if (!anyGroupMatch) continue;
       }
 
-      // Rule matched — map action to decision
       const action = rule.action;
       if (action === 'block') {
         return { decision: 'deny', reason: rule.description || rule.name, ruleId: rule.id };
@@ -560,7 +548,6 @@ class VetoSDKService {
   ): boolean {
     if (!condition.field || !condition.operator) return true;
 
-    // Resolve field value using dot notation
     const fieldValue = this._resolveField(condition.field, args);
     const expected = condition.value;
 
@@ -718,5 +705,4 @@ class VetoSDKService {
   }
 }
 
-// Singleton
 export const vetoSDK = new VetoSDKService();

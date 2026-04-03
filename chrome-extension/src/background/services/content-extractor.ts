@@ -127,7 +127,6 @@ class ContentExtractorService {
         .slice(0, 50),
     );
 
-    // Salary figures
     const salaryFigures: number[] = [];
     for (const regex of [SALARY_REGEX, SALARY_AMOUNT_REGEX]) {
       regex.lastIndex = 0;
@@ -142,7 +141,6 @@ class ContentExtractorService {
       }
     }
 
-    // Equity percentages
     const equityPercentages: number[] = [];
     for (const match of text.matchAll(EQUITY_REGEX)) {
       const pct = Number.parseFloat(match[1]);
@@ -150,16 +148,10 @@ class ContentExtractorService {
       if (equityPercentages.length >= 50) break;
     }
 
-    // Government ID detection (SSN, NI, tax IDs)
     const govIdCount = [...text.matchAll(GOV_ID_REGEX)].length;
-
-    // Credit card detection
     const creditCardCount = [...text.matchAll(CREDIT_CARD_REGEX)].length;
-
-    // API key / secret detection
     const apiKeyCount = [...text.matchAll(API_KEY_REGEX)].length;
 
-    // Sensitive terms summary
     const sensitiveTerms: string[] = [];
     if (salaryFigures.length > 0) sensitiveTerms.push('salary');
     if (equityPercentages.length > 0) sensitiveTerms.push('equity');
@@ -222,7 +214,6 @@ class ContentExtractorService {
     return this.extract(this.collectVisibleText(root), url);
   }
 
-  /** Clear the cache. Called at the start of each task. */
   reset(): void {
     this._cache.clear();
   }

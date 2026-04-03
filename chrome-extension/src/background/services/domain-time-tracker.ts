@@ -22,11 +22,7 @@ function extractDomain(url: string): string | null {
 class DomainTimeTrackerService {
   /** Accumulated milliseconds per domain (finalized segments only) */
   private _accumulated = new Map<string, number>();
-
-  /** Domain the agent is currently on, if any */
   private _currentDomain: string | null = null;
-
-  /** Timestamp when the current domain segment started */
   private _segmentStart: number | null = null;
 
   /**
@@ -78,7 +74,6 @@ class DomainTimeTrackerService {
     }
   }
 
-  /** Reset all tracking. Called at the start of each task. */
   reset(): void {
     this._accumulated.clear();
     this._currentDomain = null;

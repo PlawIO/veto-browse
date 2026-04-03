@@ -153,12 +153,14 @@ class VetoSDKService {
         apiKey: config.apiKey,
         endpoint: config.endpoint || 'https://api.veto.so',
         refreshIntervalMs: 60_000,
+        mode: config.mode as 'strict' | 'log' | 'shadow',
+        agentId: config.agentId || 'veto-browse',
+        sessionId: config.sessionId || undefined,
       });
 
-      // TODO: Pass config.mode to SDK once fromCloud supports mode parameter.
-      // Currently mode is stored in config but SDK fromCloud doesn't accept it.
-      // Local rules are loaded into _localRules and will be applied to SDK
-      // evaluation once the merge API is available (Phase 4).
+      if (this._localRules.length > 0) {
+        this._veto.addRules(this._localRules);
+      }
 
       logger.info(`Veto SDK initialized (mode: ${config.mode}, local rules: ${this._localRules.length})`);
     } catch (error) {
@@ -488,12 +490,14 @@ class VetoSDKService {
         this._localRules.push(rule);
       }
     }
+    this._veto?.addRules(rules);
     await this._persistLocalRules();
     logger.info(`Local rules updated (total: ${this._localRules.length})`);
   }
 
   async removeLocalRule(ruleId: string): Promise<void> {
     this._localRules = this._localRules.filter(r => r.id !== ruleId);
+    this._veto?.removeRule(ruleId);
     await this._persistLocalRules();
   }
 

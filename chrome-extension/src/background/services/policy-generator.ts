@@ -112,18 +112,25 @@ export type PolicyGenerationResult =
  * legitimate browsing instructions like "don't click that button".
  */
 export function looksLikePolicyDeclaration(task: string): boolean {
-  const t = task.toLowerCase();
+  const t = task.toLowerCase().trim();
 
+  // Reusable fragments
   const hasProhibition = /\b(?:don'?t|do\s*not|never)\b/.test(t);
-  const hasCondition = /\b(?:unless|until|except\s+(?:if|when)|only\s+(?:if|when))\b/.test(t);
+  const hasCondition = /\b(?:unless|until|without|except\s+(?:if|when)|only\s+(?:if|when))\b/.test(t);
+  const hasScope = /\b(?:any(?:thing|one|where)?|all|every(?:thing|one|where)?)\b/.test(t);
+
   // Standing prohibition + conditional clause = policy rule
   if (hasProhibition && hasCondition) return true;
 
-  // Broad prohibition targeting a class of things (any/all/every)
-  if (hasProhibition && /\b(?:any|all|every)\b/.test(t)) return true;
+  // Broad prohibition targeting a class of things (anything, anyone, all, every, etc.)
+  if (hasProhibition && hasScope) return true;
+
+  // Imperative "never" at the start is a standing rule, not a one-off instruction
+  // ("Never visit X" vs "don't click that"). Excludes "never mind".
+  if (/^(?:please\s+)?never\b/.test(t) && !/^(?:please\s+)?never\s*mind\b/.test(t)) return true;
 
   // Explicit blocking/restricting with scope
-  if (/\b(?:block|deny|restrict|prevent)\b/.test(t) && /\b(?:any|all|every|from\s+\w+)\b/.test(t)) return true;
+  if (/\b(?:block|deny|restrict|prevent)\b/.test(t) && (hasScope || /\bfrom\s+\w+/.test(t))) return true;
 
   // Approval or alert requirements
   if (/\brequire\s+(?:my\s+)?(?:approval|permission)\b/i.test(t)) return true;

@@ -187,6 +187,18 @@ export interface PolicyCancelledMessage {
   type: 'policy_cancelled';
 }
 
+export interface VetoRulesListMessage {
+  type: 'veto_rules_list';
+  rules: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    severity: string;
+    action: string;
+    enabled: boolean;
+  }>;
+}
+
 export interface TrustSignalMessage {
   type: 'trust_signal';
   taskId: string;
@@ -210,7 +222,8 @@ export type BackgroundToSidePanelMessage =
   | PolicyClarificationMessage
   | PolicyActivatedMessage
   | PolicyCancelledMessage
-  | TrustSignalMessage;
+  | TrustSignalMessage
+  | VetoRulesListMessage;
 
 export interface HeartbeatMessage {
   type: 'heartbeat';
@@ -298,6 +311,15 @@ export interface VetoPresetActivateMessage {
   rules: Record<string, unknown>[];
 }
 
+export interface VetoListRulesMessage {
+  type: 'veto_list_rules';
+}
+
+export interface VetoRemoveRuleMessage {
+  type: 'veto_remove_rule';
+  ruleId: string;
+}
+
 export interface VetoCycleModeMessage {
   type: 'veto_cycle_mode';
 }
@@ -320,6 +342,8 @@ export type SidePanelToBackgroundMessage =
   | PolicyClarificationResponseMessage
   | PolicyCancelMessage
   | VetoPresetActivateMessage
+  | VetoListRulesMessage
+  | VetoRemoveRuleMessage
   | VetoCycleModeMessage;
 
 export interface ContentRuntimeReadyMessage {

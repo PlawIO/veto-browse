@@ -23,6 +23,7 @@ import ChatHistoryList from './components/ChatHistoryList';
 import BookmarkList from './components/BookmarkList';
 import ConversationView from './components/ConversationView';
 import TrustStatusBar, { type TrustState } from './components/TrustStatusBar';
+import ActiveRulesPanel, { type ActiveRule } from './components/ActiveRulesPanel';
 import { EventType, type AgentEvent, ExecutionState } from './types/event';
 import './SidePanel.css';
 
@@ -64,6 +65,7 @@ const SidePanel = () => {
   const [pendingPolicy, setPendingPolicy] = useState<PolicyPreview | null>(null);
   const [pendingPolicyClarification, setPendingPolicyClarification] = useState<PendingPolicyClarification | null>(null);
   const [vetoMode, setVetoMode] = useState<string | null>(null);
+  const [activeRules, setActiveRules] = useState<ActiveRule[]>([]);
   const [trustState, setTrustState] = useState<TrustState>({
     vetoMode: null,
     firewallSummary: null,
@@ -557,11 +559,9 @@ const SidePanel = () => {
         } else if (message.type === 'policy_activated') {
           setPendingPolicy(null);
           setPendingPolicyClarification(null);
-          appendMessage({
-            actor: Actors.SYSTEM,
-            content: `[Veto] Policy activated (${message.ruleCount} rule${message.ruleCount !== 1 ? 's' : ''})`,
-            timestamp: Date.now(),
-          });
+          portRef.current?.postMessage({ type: 'veto_list_rules' });
+        } else if (message.type === 'veto_rules_list') {
+          setActiveRules(message.rules ?? []);
         } else if (message.type === 'policy_cancelled') {
           setPendingPolicy(null);
           setPendingPolicyClarification(null);
@@ -604,6 +604,7 @@ const SidePanel = () => {
       });
 
       portRef.current.postMessage({ type: 'runtime_snapshot_request' });
+      portRef.current.postMessage({ type: 'veto_list_rules' });
 
       // Setup heartbeat interval
       if (heartbeatIntervalRef.current) {
@@ -949,11 +950,15 @@ const SidePanel = () => {
 
   const handlePresetActivate = useCallback((rules: Array<Record<string, unknown>>) => {
     const preview: PolicyPreview = {
-      rules: rules as PolicyPreview['rules'],
+      rules: rules as unknown as PolicyPreview['rules'],
       explanation: `${rules.length} rule${rules.length !== 1 ? 's' : ''} from template — review before activating.`,
       source: 'preset',
     };
     setPendingPolicy(preview);
+  }, []);
+
+  const handleRemoveRule = useCallback((ruleId: string) => {
+    portRef.current?.postMessage({ type: 'veto_remove_rule', ruleId });
   }, []);
 
   const handleVetoModeToggle = useCallback(() => {
@@ -1515,7 +1520,10 @@ const SidePanel = () => {
                   <PolicyCard preview={pendingPolicy} onActivate={handlePolicyActivate} onCancel={handlePolicyCancel} />
                 )}
                 {vetoMode && messages.length === 0 && !pendingPolicy && (
-                  <PolicyPresets onActivate={handlePresetActivate} />
+                  <>
+                    <PolicyPresets onActivate={handlePresetActivate} />
+                    <ActiveRulesPanel rules={activeRules} onRemove={handleRemoveRule} />
+                  </>
                 )}
                 {messages.length > 0 && (
                   <div className="border-t p-2" style={{ borderColor: 'var(--border)' }}>

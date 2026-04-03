@@ -198,47 +198,69 @@ Omit "tools" to apply to ALL actions.
 
 ## Available Condition Fields
 
-You can condition on ANY field in the action's arguments using dot notation.
-The system provides these built-in fields, but you are not limited to them:
+You can condition on ANY field using dot notation. Choose the RIGHT scope:
 
-**Page context:**
+### Scope 1 — Element context (per-element enforcement)
+Available for actions targeting a specific page element (click, input, scroll-to).
+Use this when the policy applies to SPECIFIC ITEMS, not the whole page.
+
+**Structured fields (most precise — use when table/grid detected):**
+- arguments.element_context.row_fields.{ColumnName} (string) — value of a specific column in this row. Column names come from table headers. Example: arguments.element_context.row_fields.Location contains "NYC" matches only rows where the Location column contains "NYC".
+
+**Text fields (always available):**
+- arguments.element_context.element_text (string) — the target element's own text
+- arguments.element_context.row_text (string) — ALL visible text in the element's row/container. In a spreadsheet row: "1 Antler US Fund $160 1/5/2026 NYC". Use "contains" for substring matching.
+
+**Per-row entities (auto-extracted from row_text):**
+- arguments.element_context.row_entities.prices (number[]) — prices in this row
+- arguments.element_context.row_entities.max_price (number) — highest price in this row
+- arguments.element_context.row_entities.emails (string[]) — emails in this row
+- arguments.element_context.row_entities.has_sensitive_pii (boolean) — PII in this row
+- arguments.element_context.row_entities.has_salary_figures (boolean) — salary data in this row
+- arguments.element_context.row_entities.has_credit_cards (boolean) — credit cards in this row
+- arguments.element_context.row_entities.has_gov_ids (boolean) — gov IDs in this row
+(Same fields as extracted_entities below, but scoped to this row only.)
+
+### Scope 2 — Page context (page-wide enforcement)
+Use this when the policy applies to the ENTIRE PAGE, not specific items.
+
 - arguments.current_url (string) — current page URL
 - arguments.page_title (string) — current page title
 - arguments.action_index (number) — action sequence number in this task
 - arguments.domain_time_seconds (number) — cumulative seconds on this domain
 
-**Element context** (for actions targeting a specific page element — click, input, scroll-to, etc.):
-- arguments.element_context.element_text (string) — the target element's own text content
-- arguments.element_context.row_text (string) — ALL visible text in the element's row, list item, card, or containing group. In a spreadsheet, this is the full row (e.g. "Antler US Fund $160 1/5/2026 2026 II NYC"). Use this for per-row/per-item policy enforcement.
-- arguments.element_context.tag (string) — HTML tag of the target element
-- arguments.element_context.xpath (string) — XPath of the target element
+**Page-wide extracted entities:**
+- arguments.extracted_entities.max_price (number) — highest price on entire page
+- arguments.extracted_entities.has_sensitive_pii (boolean) — any PII on page
+- arguments.extracted_entities.has_credit_cards (boolean) — credit cards on page
+- arguments.extracted_entities.has_salary_figures (boolean) — salary data on page
+- arguments.extracted_entities.has_gov_ids (boolean) — gov IDs on page
+- arguments.extracted_entities.has_api_keys (boolean) — API keys on page
+- arguments.extracted_entities.has_equity_info (boolean) — equity data on page
+- arguments.extracted_entities.prices (number[])
+- arguments.extracted_entities.emails (string[])
+- arguments.extracted_entities.phone_numbers (string[])
+- arguments.extracted_entities.salary_figures (number[])
+- arguments.extracted_entities.equity_percentages (number[])
+- arguments.extracted_entities.sensitive_terms (string[]) — categories found
 
-**Element styles** (for actions targeting page elements):
-- arguments.computed_styles.* — any CSS property (backgroundColor, color, fontSize, display, visibility, opacity, position, zIndex, pointerEvents, fontWeight, textDecoration, overflow, cursor, borderColor)
+**Element styles:**
+- arguments.computed_styles.* — CSS properties (backgroundColor, color, fontSize, etc.)
 
-**Extracted entities** (auto-detected from visible page content):
-- arguments.extracted_entities.prices (number[]) — prices in any currency
-- arguments.extracted_entities.max_price (number) — highest price on page
-- arguments.extracted_entities.min_price (number) — lowest price on page
-- arguments.extracted_entities.emails (string[]) — email addresses
-- arguments.extracted_entities.phone_numbers (string[]) — phone numbers (international)
-- arguments.extracted_entities.salary_figures (number[]) — salary/compensation amounts
-- arguments.extracted_entities.has_salary_figures (boolean)
-- arguments.extracted_entities.equity_percentages (number[]) — equity/vesting %
-- arguments.extracted_entities.has_equity_info (boolean)
-- arguments.extracted_entities.has_sensitive_pii (boolean) — any PII detected
-- arguments.extracted_entities.has_credit_cards (boolean) — credit card numbers detected
-- arguments.extracted_entities.has_gov_ids (boolean) — government ID patterns detected
-- arguments.extracted_entities.has_api_keys (boolean) — API keys/secrets detected
-- arguments.extracted_entities.sensitive_terms (string[]) — categories found: salary, equity, gov_id, credit_card, api_key, email, phone
-
-**Action-specific arguments:**
+### Scope 3 — Action-specific arguments
 - arguments.url — target URL for navigation
 - arguments.text — text being typed
 - arguments.query — search query
 - arguments.index — target element index
 
 You can also use any custom field path. Unknown fields resolve to undefined and conditions on them won't match.
+
+### Which scope to use:
+- "Block items in NYC" → element_context.row_fields.Location or element_context.row_text (per-item)
+- "Block rows over $150" → element_context.row_entities.max_price (per-item)
+- "Block when credit cards visible" → extracted_entities.has_credit_cards (page-wide)
+- "Block after 20 min on social media" → domain_time_seconds (page-wide)
+- "Block navigation to competitor.com" → current_url (page-wide)
 
 ## Operators
 
@@ -264,10 +286,12 @@ Use "block" for hard safety limits. Use "require_approval" when the user wants c
 1. Rules are evaluated per-action, not per-page
 2. Use "conditions" for AND logic, "condition_groups" for OR logic
 3. For URL matching, prefer "contains" or "matches" over "equals"
-4. For price thresholds, use "arguments.extracted_entities.max_price" with "greater_than"
-5. Generate the minimum number of rules needed
-6. For per-row/per-item enforcement (e.g. "block items in NYC", "hide funds from Acme"), use arguments.element_context.row_text with "contains" — this checks the specific row the agent is interacting with, NOT the entire page
-7. Use extracted_entities for page-wide checks (e.g. "block when credit cards visible"). Use element_context for item-level checks (e.g. "block clicking rows where location is NYC")
+4. For page-wide price thresholds, use "arguments.extracted_entities.max_price" with "greater_than"
+5. For per-row price thresholds, use "arguments.element_context.row_entities.max_price" with "greater_than"
+6. Generate the minimum number of rules needed
+7. PREFER element_context.row_fields.{Column} when the user references a specific column/field — this is the most precise
+8. FALL BACK to element_context.row_text with "contains" when column names aren't clear
+9. NEVER use extracted_entities for per-item policies — it covers the whole page, not individual rows
 
 ## Output Format
 

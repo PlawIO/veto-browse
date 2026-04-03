@@ -95,25 +95,28 @@ async function emitTrustSignal(taskId: string, content: string): Promise<void> {
   });
 }
 
-chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'veto_auth_callback' && sender.url?.startsWith('https://veto.so')) {
-    const token = message.token;
-    if (!token || typeof token !== 'string' || token.length < 20) {
-      sendResponse({ success: false, error: 'Invalid token' });
-      return;
+chrome.runtime.onMessageExternal.addListener(
+  (message: Record<string, unknown>, sender: chrome.runtime.MessageSender, sendResponse: (r: unknown) => void) => {
+    if (message?.type === 'veto_auth_callback' && sender.url?.startsWith('https://veto.so')) {
+      const token = message.token;
+      if (!token || typeof token !== 'string' || token.length < 20) {
+        sendResponse({ success: false, error: 'Invalid token' });
+        return false;
+      }
+      vetoStore
+        .updateVeto({
+          authToken: token,
+          userEmail: (message.email as string) || '',
+          isAuthenticated: true,
+          enabled: true,
+        })
+        .then(() => sendResponse({ success: true }))
+        .catch(() => sendResponse({ success: false, error: 'Storage failed' }));
+      return true;
     }
-    vetoStore
-      .updateVeto({
-        authToken: token,
-        userEmail: message.email || '',
-        isAuthenticated: true,
-        enabled: true,
-      })
-      .then(() => sendResponse({ success: true }))
-      .catch(() => sendResponse({ success: false, error: 'Storage failed' }));
-    return true;
-  }
-});
+    return false;
+  },
+);
 
 async function emitActiveTrustState(taskId: string): Promise<void> {
   const [firewallConfig, vetoConfig] = await Promise.all([firewallStore.getFirewall(), vetoStore.getVeto()]);

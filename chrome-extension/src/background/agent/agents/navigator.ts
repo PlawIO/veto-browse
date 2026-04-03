@@ -447,12 +447,14 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
             if (domElement.computedStyles) {
               richContext.computed_styles = domElement.computedStyles;
             }
-            // Element context: the clicked element's own text + the full text
-            // of its row/container. Enables per-row policy enforcement in tables,
-            // lists, and card layouts.
+
+            const rowText = domElement.getRowText();
             richContext.element_context = {
               element_text: domElement.getAllTextTillNextClickableElement(2),
-              row_text: domElement.getRowText(),
+              row_text: rowText,
+              row_fields: domElement.getRowFields(),
+              // Per-row entity extraction: prices, emails, PII etc. scoped to this row
+              row_entities: contentExtractor.extract(rowText),
               tag: domElement.tagName ?? '',
               xpath: domElement.xpath ?? '',
             };

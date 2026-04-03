@@ -1,6 +1,6 @@
-# Contributing to NanoBrowser
+# Contributing to veto-browse
 
-We deeply appreciate your interest in contributing to NanoBrowser! Every contribution helps make Nanobrowser more powerful and accessible for everyone.
+We deeply appreciate your interest in contributing to veto-browse! Every contribution helps make veto-browse more powerful and accessible for everyone.
 
 ## Quick Start
 

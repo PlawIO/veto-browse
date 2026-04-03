@@ -39,7 +39,7 @@ function withOperaSidebar(manifest) {
   return deepmerge(manifest, {
     sidebar_action: {
       default_panel: 'side-panel/index.html',
-      default_title: 'Veto Browser Agent',
+      default_title: 'veto-browse',
       default_icon: 'icon-32.png',
     },
   });

@@ -1,11 +1,11 @@
 {
-  "name": "nanobrowser",
+  "name": "veto-browse",
   "version": "0.1.13",
-  "description": "AI web automation tool",
+  "description": "veto-browse browser automation extension",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nanobrowser/nanobrowser.git"
+    "url": "https://github.com/PlawIO/nanobrowser.git"
   },
   "type": "module",
   "scripts": {

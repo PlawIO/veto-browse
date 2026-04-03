@@ -12,7 +12,7 @@ const defaultFavoritePrompts = [
   {
     title: '🐦 Follow @yazcal on X',
     content:
-      'Go to https://x.com/yazcal and summarize the latest updates, pinned content, and anything relevant to Veto Browser.',
+      'Go to https://x.com/yazcal and summarize the latest updates, pinned content, and anything relevant to veto-browse.',
   },
   {
     title: '📚 Read the Veto docs',

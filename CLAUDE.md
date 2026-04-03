@@ -4,13 +4,11 @@ This file provides guidance to AI coding assistants (e.g., Claude Code, GitHub C
 
 ## Project Overview
 
-Nanobrowser is an open-source AI web automation Chrome extension that runs multi-agent systems locally in the browser. It's a free alternative to OpenAI Operator with support for multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama, etc.).
+veto-browse is an open-source AI web automation Chrome extension that runs multi-agent systems locally in the browser. It's a free alternative to OpenAI Operator with support for multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama, etc.).
 
 ## Development Commands
 
 **Package Manager**: Always use `pnpm` (required, configured in Cursor rules)
-
-**Core Commands**:
 
 - `pnpm install` - Install dependencies
 - `pnpm dev` - Start development mode with hot reload
@@ -259,13 +257,14 @@ Use Chrome i18n placeholder format with proper definitions:
 - **XSS Prevention**: Sanitize content before rendering, especially when injecting into web pages
 - **URL Validation**: Validate and restrict navigation to prevent malicious redirects
 - **Error Handling**: Avoid exposing sensitive information in error messages or logs
- - **Secrets/Config**: Use `.env.local` (git‑ignored) and prefix variables with `VITE_`.
-   Example: `VITE_POSTHOG_API_KEY`. Vite in `chrome-extension/vite.config.mts` loads
-   `VITE_*` from the parent directory.
+- **Secrets/Config**: Use `.env.local` (git‑ignored) and prefix variables with `VITE_`.
+  Example: `VITE_VETO_API_URL`. Vite in `chrome-extension/vite.config.mts` loads
+  `VITE_*` from the parent directory.
 
 ## Important Reminders
 
 - Always use `pnpm` package manager (required for this project)
+
 - Node.js version: follow `.nvmrc` and `package.json` engines
 - Use `nvm use` to match `.nvmrc` before installing
 - `engine-strict=true` is enabled in `.npmrc`; non-matching engines fail install

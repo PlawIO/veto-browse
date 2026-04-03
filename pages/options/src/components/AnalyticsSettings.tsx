@@ -71,7 +71,7 @@ export const AnalyticsSettings = () => {
         style={{ borderTop: `1px solid ${c.border}`, borderBottom: `1px solid ${c.border}` }}>
         <div>
           <div className="text-[13px] font-medium" style={{ color: c.text }}>
-            Help improve Veto Browser
+            Help improve veto-browse
           </div>
           <div className="mt-0.5 text-[12px]" style={{ color: c.textDim }}>
             Share anonymous usage data

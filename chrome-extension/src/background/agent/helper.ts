@@ -359,7 +359,7 @@ export function createChatModel(providerConfig: ProviderConfig, modelConfig: Mod
       return createOpenAIChatModel(providerConfig, modelConfig, {
         headers: {
           'HTTP-Referer': 'https://veto.so',
-          'X-Title': 'Veto Browser',
+          'X-Title': 'veto-browse',
         },
       });
     }

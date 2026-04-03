@@ -128,3 +128,30 @@ code {
 .animate-progress {
   animation: progress 2s ease-in-out infinite;
 }
+
+/* ── Step disclosure ── */
+.step-disclosure summary::-webkit-details-marker { display: none; }
+
+.step-disclosure-chevron {
+  display: inline-block;
+  transition: transform var(--transition-fast);
+  font-size: 10px;
+}
+
+.step-disclosure[open] .step-disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.step-disclosure-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 150ms ease;
+}
+
+.step-disclosure[open] .step-disclosure-content {
+  grid-template-rows: 1fr;
+}
+
+.step-disclosure-content > div {
+  overflow: hidden;
+}

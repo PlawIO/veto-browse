@@ -15,13 +15,14 @@ import {
 } from '@extension/storage';
 import favoritesStorage, { type FavoritePrompt } from '@extension/storage/lib/prompt/favorites';
 import { t } from '@extension/i18n';
-import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import ApprovalCard, { type ApprovalRequest } from './components/ApprovalCard';
 import PolicyCard, { type PolicyPreview } from './components/PolicyCard';
 import PolicyPresets from './components/PolicyPresets';
 import ChatHistoryList from './components/ChatHistoryList';
 import BookmarkList from './components/BookmarkList';
+import ConversationView from './components/ConversationView';
+import TrustStatusBar, { type TrustState } from './components/TrustStatusBar';
 import { EventType, type AgentEvent, ExecutionState } from './types/event';
 import './SidePanel.css';
 
@@ -30,6 +31,17 @@ declare global {
   interface Window {
     chrome: typeof chrome;
   }
+}
+
+interface PendingPolicyClarification {
+  explanation: string;
+  questions: string[];
+  nonce: string;
+}
+
+function formatPolicyClarificationMessage(clarification: PendingPolicyClarification): string {
+  const questions = clarification.questions.map((question, index) => `${index + 1}. ${question}`).join('\n');
+  return `[Policy] ${clarification.explanation}\n${questions}\n\nReply in chat with the missing details and I’ll continue.`;
 }
 
 const SidePanel = () => {
@@ -50,7 +62,13 @@ const SidePanel = () => {
   const [replayEnabled, setReplayEnabled] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [pendingPolicy, setPendingPolicy] = useState<PolicyPreview | null>(null);
+  const [pendingPolicyClarification, setPendingPolicyClarification] = useState<PendingPolicyClarification | null>(null);
   const [vetoMode, setVetoMode] = useState<string | null>(null);
+  const [trustState, setTrustState] = useState<TrustState>({
+    vetoMode: null,
+    firewallSummary: null,
+    sessionBlockCount: 0,
+  });
   const sessionIdRef = useRef<string | null>(null);
   const isReplayingRef = useRef<boolean>(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
@@ -444,6 +462,14 @@ const SidePanel = () => {
             content: message.content,
             timestamp: message.timestamp,
           });
+          // Parse trust signal to update status bar
+          const fwMatch = message.content.match(/Firewall (on|off)(?:\s*\(allow (\d+), deny (\d+)\))?/);
+          if (fwMatch) {
+            setTrustState(prev => ({
+              ...prev,
+              firewallSummary: fwMatch[0],
+            }));
+          }
         } else if (message.type === 'error') {
           // Handle error messages from service worker
           appendMessage({
@@ -498,6 +524,7 @@ const SidePanel = () => {
           setShowStopButton(true);
         } else if (message.type === 'policy_preview') {
           setMessages(prev => prev.filter(msg => msg.content !== progressMessage));
+          setPendingPolicyClarification(null);
           setPendingPolicy({
             rules: message.rules,
             explanation: message.explanation,
@@ -505,8 +532,31 @@ const SidePanel = () => {
           });
           setInputEnabled(true);
           setShowStopButton(false);
+        } else if (message.type === 'policy_clarification') {
+          setMessages(prev => prev.filter(msg => msg.content !== progressMessage));
+          const clarification = {
+            explanation: message.explanation,
+            questions: message.questions,
+            nonce: message.nonce,
+          };
+          setPendingPolicy(null);
+          setPendingPolicyClarification(previousClarification => {
+            if (previousClarification?.nonce === clarification.nonce) {
+              return previousClarification;
+            }
+
+            appendMessage({
+              actor: Actors.SYSTEM,
+              content: formatPolicyClarificationMessage(clarification),
+              timestamp: Date.now(),
+            });
+            return clarification;
+          });
+          setInputEnabled(true);
+          setShowStopButton(false);
         } else if (message.type === 'policy_activated') {
           setPendingPolicy(null);
+          setPendingPolicyClarification(null);
           appendMessage({
             actor: Actors.SYSTEM,
             content: `[Veto] Policy activated (${message.ruleCount} rule${message.ruleCount !== 1 ? 's' : ''})`,
@@ -514,6 +564,7 @@ const SidePanel = () => {
           });
         } else if (message.type === 'policy_cancelled') {
           setPendingPolicy(null);
+          setPendingPolicyClarification(null);
         } else if (message.type === 'veto_decision') {
           const actionLabel = (message.toolName || '').replace('browser_', '').replace(/_/g, ' ');
           const reason = message.reason || '';
@@ -523,6 +574,7 @@ const SidePanel = () => {
               content: `[Veto] Blocked: ${actionLabel} \u2014 ${reason}`,
               timestamp: Date.now(),
             });
+            setTrustState(prev => ({ ...prev, sessionBlockCount: prev.sessionBlockCount + 1 }));
           } else if (reason.startsWith('log_mode:')) {
             appendMessage({
               actor: Actors.SYSTEM,
@@ -532,6 +584,7 @@ const SidePanel = () => {
           }
         } else if (message.type === 'veto_mode_changed') {
           setVetoMode(message.mode);
+          setTrustState(prev => ({ ...prev, vetoMode: message.mode }));
         }
       });
 
@@ -545,6 +598,7 @@ const SidePanel = () => {
         }
         setPendingApprovals([]);
         setPendingPolicy(null);
+        setPendingPolicyClarification(null);
         setInputEnabled(true);
         setShowStopButton(false);
       });
@@ -782,7 +836,7 @@ const SidePanel = () => {
       setShowStopButton(true);
 
       // Create a new chat session for this task if not in follow-up mode
-      if (!isFollowUpMode) {
+      if (!isFollowUpMode && !pendingPolicyClarification) {
         // Use display text for session title if available, otherwise use full text
         const titleText = displayText || text;
         const newSession = await chatHistoryStore.createSession(
@@ -808,6 +862,16 @@ const SidePanel = () => {
       // Setup connection if not exists
       if (!portRef.current) {
         setupConnection();
+      }
+
+      if (pendingPolicyClarification) {
+        await sendMessage({
+          type: 'policy_clarification_response',
+          answer: text,
+          nonce: pendingPolicyClarification.nonce,
+        });
+        console.log('policy_clarification_response sent', text);
+        return;
       }
 
       // Send message using the utility function
@@ -925,6 +989,7 @@ const SidePanel = () => {
       console.error('Policy cancel error:', err);
     }
     setPendingPolicy(null);
+    setPendingPolicyClarification(null);
     appendMessage({
       actor: Actors.SYSTEM,
       content: '[Veto] Policy cancelled',
@@ -941,6 +1006,9 @@ const SidePanel = () => {
     setShowStopButton(false);
     setIsFollowUpMode(false);
     setIsHistoricalSession(false);
+    setPendingPolicy(null);
+    setPendingPolicyClarification(null);
+    setTrustState(prev => ({ ...prev, sessionBlockCount: 0 }));
 
     // Disconnect any existing connection
     stopConnection();
@@ -1348,6 +1416,7 @@ const SidePanel = () => {
             </button>
           </div>
         </header>
+        <TrustStatusBar trustState={{ ...trustState, vetoMode }} />
         {showHistory ? (
           <div className="flex-1 overflow-hidden">
             <ChatHistoryList
@@ -1434,7 +1503,7 @@ const SidePanel = () => {
                 )}
                 {messages.length > 0 && (
                   <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-2">
-                    <MessageList messages={messages} />
+                    <ConversationView messages={messages} />
                     <div ref={messagesEndRef} />
                   </div>
                 )}

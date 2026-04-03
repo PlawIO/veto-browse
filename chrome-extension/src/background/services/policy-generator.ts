@@ -29,7 +29,8 @@ import {
 
 const logger = createLogger('PolicyGenerator');
 
-const GENERATION_TIMEOUT_MS = 30_000;
+const API_TIMEOUT_MS = 30_000;
+const LOCAL_TIMEOUT_MS = 60_000;
 const VETO_HOSTED_ENDPOINT = 'https://api.veto.so';
 
 // --- Zod schema for LLM output ---
@@ -70,13 +71,65 @@ const policyOutputSchema = z.object({
 
 type PolicyOutput = z.infer<typeof policyOutputSchema>;
 
-// --- Result type ---
+export interface PolicyClarificationRequest {
+  explanation: string;
+  questions: string[];
+}
 
-export interface PolicyGenerationResult {
-  success: boolean;
+export interface PolicyGenerationSuccessResult {
+  success: true;
+  kind: 'preview';
   rules: Rule[];
   explanation: string;
-  error?: string;
+}
+
+export interface PolicyGenerationClarificationResult {
+  success: true;
+  kind: 'clarification';
+  rules: [];
+  explanation: string;
+  clarification: PolicyClarificationRequest;
+}
+
+export interface PolicyGenerationFailureResult {
+  success: false;
+  kind: 'error';
+  rules: [];
+  explanation: string;
+  error: string;
+}
+
+export type PolicyGenerationResult =
+  | PolicyGenerationSuccessResult
+  | PolicyGenerationClarificationResult
+  | PolicyGenerationFailureResult;
+
+/**
+ * Detect natural-language policy declarations — standing rules with conditions
+ * that should route to policy generation rather than the browser automation loop.
+ *
+ * Conservative: matches clear policy patterns to avoid false-routing
+ * legitimate browsing instructions like "don't click that button".
+ */
+export function looksLikePolicyDeclaration(task: string): boolean {
+  const t = task.toLowerCase();
+
+  const hasProhibition = /\b(?:don'?t|do\s*not|never)\b/.test(t);
+  const hasCondition = /\b(?:unless|until|except\s+(?:if|when)|only\s+(?:if|when))\b/.test(t);
+  // Standing prohibition + conditional clause = policy rule
+  if (hasProhibition && hasCondition) return true;
+
+  // Broad prohibition targeting a class of things (any/all/every)
+  if (hasProhibition && /\b(?:any|all|every)\b/.test(t)) return true;
+
+  // Explicit blocking/restricting with scope
+  if (/\b(?:block|deny|restrict|prevent)\b/.test(t) && /\b(?:any|all|every|from\s+\w+)\b/.test(t)) return true;
+
+  // Approval or alert requirements
+  if (/\brequire\s+(?:my\s+)?(?:approval|permission)\b/i.test(t)) return true;
+  if (/\b(?:warn|alert)\s+me\b/i.test(t) && /\b(?:if|when|before|whenever)\b/i.test(t)) return true;
+
+  return false;
 }
 
 // --- Operator whitelist for validation ---
@@ -223,6 +276,62 @@ export function resolvePolicyGenerationEndpoint(endpoint: string, isAuthenticate
   return isAuthenticated ? VETO_HOSTED_ENDPOINT : endpoint;
 }
 
+function normalizePolicyInput(input: string): string {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+function hasExplicitDomainList(input: string): boolean {
+  return /\b(x|twitter|reddit|instagram|facebook|tiktok|youtube|linkedin)\.com\b/i.test(input);
+}
+
+function hasSupportedRedirectFallback(input: string): boolean {
+  return /\b(block only|just block|no redirect|don't redirect|do not redirect|skip redirect)\b/i.test(input);
+}
+
+export function reviewPolicyRequest(input: string): PolicyClarificationRequest | null {
+  const normalizedInput = normalizePolicyInput(input);
+  const lowerInput = normalizedInput.toLowerCase();
+  const questions: string[] = [];
+
+  const mentionsRedirect =
+    /\bredirect\b|\broute me to\b|\bsend me to\b|\btake me to\b|\bopen my\b|\bopen the\b/.test(lowerInput) &&
+    /(task list|todo|to-do|tasks|calendar|planner|inbox)/.test(lowerInput);
+
+  const mentionsSocialCategory = /social media|social tabs|social sites|social apps/.test(lowerInput);
+  const mentionsTimeThreshold =
+    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/.test(lowerInput) ||
+    /\bmore than\b|\bover\b|\bafter\b/.test(lowerInput);
+  const mentionsCrossSiteWindow = /\btoday\b|\bdaily\b|\bacross\b|\ball social\b/.test(lowerInput);
+  const acceptsDefaultSocialDomains = /\bdefault\b|\bstandard set\b/.test(lowerInput);
+
+  if (mentionsSocialCategory && !hasExplicitDomainList(normalizedInput) && !acceptsDefaultSocialDomains) {
+    questions.push(
+      'Which domains should count as social media for this rule? If you want, say “use the default set” and I’ll use x.com, twitter.com, reddit.com, instagram.com, facebook.com, tiktok.com, youtube.com, and linkedin.com.',
+    );
+  }
+
+  if (mentionsSocialCategory && mentionsTimeThreshold && mentionsCrossSiteWindow) {
+    questions.push(
+      'Should that time limit apply per domain (for example 3 minutes on x.com) or across all social sites combined? The current policy engine enforces per-domain time reliably.',
+    );
+  }
+
+  if (mentionsRedirect && !hasSupportedRedirectFallback(normalizedInput)) {
+    questions.push(
+      'Veto policies can block, require approval, warn, or log, but they do not perform redirects on their own. Do you want a block-only policy, or a separate follow-up automation? If you want the follow-up flow, what exact task-list URL should be used?',
+    );
+  }
+
+  if (questions.length === 0) {
+    return null;
+  }
+
+  return {
+    explanation:
+      'I need a couple of clarifications before I can create this policy without guessing or silently encoding the wrong behavior.',
+    questions,
+  };
+}
 async function createPolicyLLM(): Promise<{ llm: BaseChatModel; modelConfig: ModelConfig }> {
   const agentModels = await agentModelStore.getAllAgentModels();
   const providers = await llmProviderStore.getAllProviders();
@@ -350,12 +459,180 @@ async function generateViaVetoAPI(input: string, authToken: string, endpoint: st
   return policyOutputSchema.parse(data);
 }
 
+// --- Instant generation for well-known patterns ---
+// Zero-latency, deterministic rule generation for common intents.
+// Falls through to LLM for anything it can't confidently match.
+
+function inferActionFromIntent(input: string): 'block' | 'require_approval' | 'warn' | 'log' {
+  const lower = input.toLowerCase();
+  if (/\b(ask|approv|confirm|review|check with)/.test(lower)) return 'require_approval';
+  if (/\b(warn|alert|flag)/.test(lower)) return 'warn';
+  if (/\b(log|track|monitor|record)/.test(lower)) return 'log';
+  return 'block';
+}
+
+function actionVerb(action: string): string {
+  if (action === 'block') return 'Blocks';
+  if (action === 'require_approval') return 'Requires approval for';
+  if (action === 'warn') return 'Warns about';
+  return 'Logs';
+}
+
+function extractPriceThreshold(input: string): number | null {
+  const match = input.match(/\$\s*([0-9,]+(?:\.[0-9]{1,2})?)/);
+  if (match) return parseFloat(match[1].replace(/,/g, ''));
+  const wordMatch = input.match(/(\d+(?:\.\d{1,2})?)\s*(?:dollars?|usd)/i);
+  if (wordMatch) return parseFloat(wordMatch[1]);
+  return null;
+}
+
+type InstantAction = 'block' | 'require_approval' | 'warn' | 'log';
+
+function instantRule(
+  id: string,
+  name: string,
+  description: string,
+  severity: 'critical' | 'high',
+  action: InstantAction,
+  conditions: Array<{ field: string; operator: string; value: string | number | boolean }>,
+) {
+  return { id, name, description, enabled: true as const, severity, action, conditions };
+}
+
+export function tryInstantGeneration(input: string): PolicyOutput | null {
+  const lower = input.toLowerCase();
+  const action = inferActionFromIntent(input);
+  const verb = actionVerb(action);
+
+  if (/credit\s*card|card\s*number|cc\s*num/i.test(lower)) {
+    return {
+      rules: [
+        instantRule(
+          'instant-credit-card-shield',
+          'Credit Card Shield',
+          'Prevents actions when credit card numbers are detected on the page',
+          'critical',
+          action,
+          [{ field: 'arguments.extracted_entities.has_credit_cards', operator: 'equals', value: true }],
+        ),
+      ],
+      explanation: `${verb} all browser actions when credit card numbers are detected on the page.`,
+    };
+  }
+
+  if (/\b(pii|personal\s*(data|info(rmation)?)|sensitive\s*(data|info))\b/i.test(lower)) {
+    return {
+      rules: [
+        instantRule(
+          'instant-pii-shield',
+          'PII Shield',
+          'Prevents actions when sensitive personal information is detected',
+          'critical',
+          action,
+          [{ field: 'arguments.extracted_entities.has_sensitive_pii', operator: 'equals', value: true }],
+        ),
+      ],
+      explanation: `${verb} all browser actions when sensitive personal data is detected on the page.`,
+    };
+  }
+
+  if (/\b(gov(ernment)?\s*id|ssn|social\s*security|passport|driver'?s?\s*licen[sc]e)\b/i.test(lower)) {
+    return {
+      rules: [
+        instantRule(
+          'instant-gov-id-shield',
+          'Government ID Shield',
+          'Prevents actions when government ID patterns are detected',
+          'critical',
+          action,
+          [{ field: 'arguments.extracted_entities.has_gov_ids', operator: 'equals', value: true }],
+        ),
+      ],
+      explanation: `${verb} all browser actions when government ID patterns (SSN, passport, license numbers) are detected.`,
+    };
+  }
+
+  if (/\b(api\s*key|secret\s*key|access\s*token|credential)\b/i.test(lower)) {
+    return {
+      rules: [
+        instantRule(
+          'instant-api-key-shield',
+          'API Key Shield',
+          'Prevents actions when API keys or secrets are detected',
+          'critical',
+          action,
+          [{ field: 'arguments.extracted_entities.has_api_keys', operator: 'equals', value: true }],
+        ),
+      ],
+      explanation: `${verb} all browser actions when API keys or secrets are detected on the page.`,
+    };
+  }
+
+  const price = extractPriceThreshold(input);
+  if (price !== null && /price|cost|spend|purchas|buy|order|checkout|cart|limit/i.test(lower)) {
+    const priceAction: InstantAction = /\b(block|stop|prevent|never|don'?t)\b/i.test(lower)
+      ? 'block'
+      : 'require_approval';
+    return {
+      rules: [
+        instantRule(
+          `instant-price-limit-${price}`,
+          `Price Limit ($${price})`,
+          `Controls actions when prices exceed $${price}`,
+          'high',
+          priceAction,
+          [{ field: 'arguments.extracted_entities.max_price', operator: 'greater_than', value: price }],
+        ),
+      ],
+      explanation: `${actionVerb(priceAction)} actions when the highest price on the page exceeds $${price}.`,
+    };
+  }
+
+  if (/\b(salary|salaries|compensation|pay\s*(rate|scale|range)|wage)\b/i.test(lower)) {
+    return {
+      rules: [
+        instantRule(
+          'instant-salary-shield',
+          'Salary Info Shield',
+          'Prevents actions when salary or compensation data is detected',
+          'high',
+          action,
+          [{ field: 'arguments.extracted_entities.has_salary_figures', operator: 'equals', value: true }],
+        ),
+      ],
+      explanation: `${verb} all browser actions when salary or compensation figures are detected.`,
+    };
+  }
+
+  return null;
+}
+
 // --- Main export ---
 
 export async function generatePolicy(input: string): Promise<PolicyGenerationResult> {
   logger.info(`Generating policy from: "${input.slice(0, 100)}..."`);
 
   try {
+    const clarification = reviewPolicyRequest(input);
+    if (clarification) {
+      logger.info(`Policy clarification required: ${clarification.questions.join(' | ')}`);
+      return {
+        success: true,
+        kind: 'clarification',
+        rules: [],
+        explanation: clarification.explanation,
+        clarification,
+      };
+    }
+
+    // Instant generation for well-known patterns (zero latency)
+    const instant = tryInstantGeneration(input);
+    if (instant) {
+      const rules = sanitizeRules(instant);
+      logger.info(`Instant generation: ${rules.length} rule(s): ${rules.map(r => r.name).join(', ')}`);
+      return { success: true, kind: 'preview', rules, explanation: instant.explanation };
+    }
+
     // Try Veto-hosted mode first (user logged in via veto.so)
     const config = await vetoStore.getVeto();
     if (config.isAuthenticated && config.authToken) {
@@ -366,13 +643,16 @@ export async function generatePolicy(input: string): Promise<PolicyGenerationRes
           config.authToken,
           resolvePolicyGenerationEndpoint(config.endpoint, config.isAuthenticated),
         ),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Veto API timed out after 30 seconds')), GENERATION_TIMEOUT_MS),
-        ),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Veto API timed out')), API_TIMEOUT_MS)),
       ]);
       const rules = sanitizeRules(parsed);
       logger.info(`Veto API generated ${rules.length} rule(s)`);
-      return { success: true, rules, explanation: parsed.explanation };
+      return {
+        success: true,
+        kind: 'preview',
+        rules,
+        explanation: parsed.explanation,
+      };
     }
 
     // Fall back to local LLM (BYOK mode)
@@ -385,43 +665,42 @@ export async function generatePolicy(input: string): Promise<PolicyGenerationRes
       new HumanMessage(`Convert this policy into Veto rules:\n\n${sanitizedInput}`),
     ];
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOCAL_TIMEOUT_MS);
+
     const llmCall = async (): Promise<PolicyOutput> => {
-      if (useStructured) {
-        const structuredLlm = llm.withStructuredOutput(policyOutputSchema, {
-          includeRaw: true,
-          name: 'policy_output',
-        });
+      try {
+        if (useStructured) {
+          const structuredLlm = llm.withStructuredOutput(policyOutputSchema, {
+            includeRaw: true,
+            name: 'policy_output',
+          });
 
-        const response = await structuredLlm.invoke(messages);
-        if (response.parsed) return policyOutputSchema.parse(response.parsed);
+          const response = await structuredLlm.invoke(messages, { signal: controller.signal });
+          if (response.parsed) return policyOutputSchema.parse(response.parsed);
 
-        // Try manual extraction from raw
-        if (response.raw?.content && typeof response.raw.content === 'string') {
-          const cleaned = removeThinkTags(response.raw.content);
-          const extracted = extractJsonFromModelOutput(cleaned);
-          return policyOutputSchema.parse(extracted as unknown);
+          if (response.raw?.content && typeof response.raw.content === 'string') {
+            const cleaned = removeThinkTags(response.raw.content);
+            const extracted = extractJsonFromModelOutput(cleaned);
+            return policyOutputSchema.parse(extracted as unknown);
+          }
+
+          throw new Error('Structured output returned no parsed result');
         }
 
-        throw new Error('Structured output returned no parsed result');
+        const response = await llm.invoke(messages, { signal: controller.signal });
+        if (typeof response.content !== 'string') {
+          throw new Error('LLM returned non-string content');
+        }
+        const cleaned = removeThinkTags(response.content);
+        const extracted = extractJsonFromModelOutput(cleaned);
+        return policyOutputSchema.parse(extracted as unknown);
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      // Fallback: manual JSON extraction
-      const response = await llm.invoke(messages);
-      if (typeof response.content !== 'string') {
-        throw new Error('LLM returned non-string content');
-      }
-      const cleaned = removeThinkTags(response.content);
-      const extracted = extractJsonFromModelOutput(cleaned);
-      return policyOutputSchema.parse(extracted as unknown);
     };
 
-    // Race with timeout
-    const parsed = await Promise.race([
-      llmCall(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Policy generation timed out after 30 seconds')), GENERATION_TIMEOUT_MS),
-      ),
-    ]);
+    const parsed = await llmCall();
 
     const rules = sanitizeRules(parsed);
 
@@ -429,6 +708,7 @@ export async function generatePolicy(input: string): Promise<PolicyGenerationRes
 
     return {
       success: true,
+      kind: 'preview',
       rules,
       explanation: parsed.explanation,
     };
@@ -439,14 +719,27 @@ export async function generatePolicy(input: string): Promise<PolicyGenerationRes
     if (error instanceof z.ZodError) {
       return {
         success: false,
+        kind: 'error',
         rules: [],
         explanation: '',
         error: `Invalid rule structure from LLM: ${error.issues.map(i => i.message).join(', ')}`,
       };
     }
 
+    const isAbort = error instanceof DOMException && error.name === 'AbortError';
+    if (isAbort || msg.includes('timed out')) {
+      return {
+        success: false,
+        kind: 'error',
+        rules: [],
+        explanation: '',
+        error: 'Policy generation timed out. Try a simpler description or a faster model.',
+      };
+    }
+
     return {
       success: false,
+      kind: 'error',
       rules: [],
       explanation: '',
       error: msg,

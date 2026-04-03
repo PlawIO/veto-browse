@@ -1,6 +1,7 @@
 import type { Message } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
+import { formatTimestamp } from '../utils';
 
 interface MessageListProps {
   messages: Message[];
@@ -81,44 +82,4 @@ function MessageBlock({ message, isSameActor }: MessageBlockProps) {
       </div>
     </div>
   );
-}
-
-/**
- * Formats a timestamp (in milliseconds) to a readable time string
- * @param timestamp Unix timestamp in milliseconds
- * @returns Formatted time string
- */
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-
-  // Check if the message is from today
-  const isToday = date.toDateString() === now.toDateString();
-
-  // Check if the message is from yesterday
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday = date.toDateString() === yesterday.toDateString();
-
-  // Check if the message is from this year
-  const isThisYear = date.getFullYear() === now.getFullYear();
-
-  // Format the time (HH:MM)
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  if (isToday) {
-    return timeStr; // Just show the time for today's messages
-  }
-
-  if (isYesterday) {
-    return `Yesterday, ${timeStr}`;
-  }
-
-  if (isThisYear) {
-    // Show month and day for this year
-    return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
-  }
-
-  // Show full date for older messages
-  return `${date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })}, ${timeStr}`;
 }

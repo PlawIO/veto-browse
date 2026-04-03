@@ -27,7 +27,7 @@ import { DEFAULT_AGENT_OPTIONS } from './agent/types';
 import BrowserContext from './browser/context';
 import { injectBuildDomTreeScripts } from './browser/dom/service';
 import { createLogger } from './log';
-import { generatePolicy, validateRuntimeRules } from './services/policy-generator';
+import { generatePolicy, looksLikePolicyDeclaration, validateRuntimeRules } from './services/policy-generator';
 import { SpeechToTextService } from './services/speechToText';
 import { vetoSDK } from './services/veto-sdk';
 
@@ -39,7 +39,23 @@ let currentPort: chrome.runtime.Port | null = null;
 let pendingPolicyRules: Rule[] | null = null;
 let pendingPolicyNonce: string | null = null;
 let pendingPolicyExplanation: string | null = null;
+let pendingPolicyClarification: {
+  input: string;
+  questions: string[];
+  explanation: string;
+  nonce: string;
+} | null = null;
 const SIDE_PANEL_URL = chrome.runtime.getURL('side-panel/index.html');
+
+function clearPendingPolicyPreview(): void {
+  pendingPolicyRules = null;
+  pendingPolicyNonce = null;
+  pendingPolicyExplanation = null;
+}
+
+function clearPendingPolicyClarification(): void {
+  pendingPolicyClarification = null;
+}
 
 function postToSidePanel(message: BackgroundToSidePanelMessage): void {
   if (!currentPort) {
@@ -288,6 +304,15 @@ chrome.runtime.onConnect.addListener(port => {
       });
     }
 
+    if (pendingPolicyClarification) {
+      postToSidePanel({
+        type: 'policy_clarification',
+        explanation: pendingPolicyClarification.explanation,
+        questions: pendingPolicyClarification.questions,
+        nonce: pendingPolicyClarification.nonce,
+      });
+    }
+
     port.onMessage.addListener(async (message: SidePanelToBackgroundMessage) => {
       try {
         switch (message.type) {
@@ -303,14 +328,15 @@ chrome.runtime.onConnect.addListener(port => {
             if (!message.task) return postToSidePanel({ type: 'error', error: t('bg_cmd_newTask_noTask') });
             if (!message.tabId) return postToSidePanel({ type: 'error', error: t('bg_errors_noTabId') });
 
-            // Policy generation intercept: "policy: ..." routes to LLM, not agent
+            // Policy generation intercept: explicit "policy: ..." prefix or
+            // natural-language policy declarations (standing rules with conditions).
             const taskTrimmed = message.task.trim();
-            if (/^policy:/i.test(taskTrimmed)) {
-              const nlInput = taskTrimmed.replace(/^policy:\s*/i, '').trim();
-              if (!nlInput) {
-                return postToSidePanel({ type: 'error', error: 'Please describe the policy you want to create.' });
-              }
-
+            const nlInput = /^policy:/i.test(taskTrimmed)
+              ? taskTrimmed.replace(/^policy:\s*/i, '').trim()
+              : looksLikePolicyDeclaration(taskTrimmed)
+                ? taskTrimmed
+                : null;
+            if (nlInput) {
               logger.info('policy_generate', nlInput);
               postToSidePanel({ type: 'policy_generating' });
 
@@ -322,6 +348,24 @@ chrome.runtime.onConnect.addListener(port => {
                 });
               }
 
+              if (policyResult.kind === 'clarification') {
+                clearPendingPolicyPreview();
+                pendingPolicyClarification = {
+                  input: nlInput,
+                  explanation: policyResult.clarification.explanation,
+                  questions: policyResult.clarification.questions,
+                  nonce: crypto.randomUUID(),
+                };
+                postToSidePanel({
+                  type: 'policy_clarification',
+                  explanation: pendingPolicyClarification.explanation,
+                  questions: pendingPolicyClarification.questions,
+                  nonce: pendingPolicyClarification.nonce,
+                });
+                break;
+              }
+
+              clearPendingPolicyClarification();
               pendingPolicyRules = policyResult.rules;
               pendingPolicyNonce = crypto.randomUUID();
               pendingPolicyExplanation = policyResult.explanation;
@@ -493,6 +537,58 @@ chrome.runtime.onConnect.addListener(port => {
             return port.postMessage({ type: 'success' });
           }
 
+          case 'policy_clarification_response': {
+            if (!pendingPolicyClarification) {
+              return port.postMessage({ type: 'error', error: 'No policy clarification is pending.' });
+            }
+            if (!message.answer.trim()) {
+              return port.postMessage({ type: 'error', error: 'Please answer the clarification question first.' });
+            }
+            if (!message.nonce || message.nonce !== pendingPolicyClarification.nonce) {
+              return port.postMessage({
+                type: 'error',
+                error: 'Policy clarification has changed. Please answer the latest questions.',
+              });
+            }
+
+            postToSidePanel({ type: 'policy_generating' });
+            const clarifiedInput = `${pendingPolicyClarification.input}\n\nClarifications:\n${message.answer.trim()}`;
+            const policyResult = await generatePolicy(clarifiedInput);
+            if (!policyResult.success) {
+              return postToSidePanel({
+                type: 'error',
+                error: policyResult.error || 'Failed to generate policy.',
+              });
+            }
+
+            if (policyResult.kind === 'clarification') {
+              pendingPolicyClarification = {
+                input: clarifiedInput,
+                explanation: policyResult.clarification.explanation,
+                questions: policyResult.clarification.questions,
+                nonce: crypto.randomUUID(),
+              };
+              clearPendingPolicyPreview();
+              return postToSidePanel({
+                type: 'policy_clarification',
+                explanation: pendingPolicyClarification.explanation,
+                questions: pendingPolicyClarification.questions,
+                nonce: pendingPolicyClarification.nonce,
+              });
+            }
+
+            clearPendingPolicyClarification();
+            pendingPolicyRules = policyResult.rules;
+            pendingPolicyNonce = crypto.randomUUID();
+            pendingPolicyExplanation = policyResult.explanation;
+            return postToSidePanel({
+              type: 'policy_preview',
+              rules: policyResult.rules as PolicyRule[],
+              explanation: policyResult.explanation,
+              nonce: pendingPolicyNonce,
+            });
+          }
+
           case 'policy_activate': {
             if (!pendingPolicyRules || pendingPolicyRules.length === 0) {
               return port.postMessage({ type: 'error', error: 'No pending policy to activate.' });
@@ -505,17 +601,15 @@ chrome.runtime.onConnect.addListener(port => {
             }
             await vetoSDK.addLocalRules(pendingPolicyRules);
             const ruleCount = pendingPolicyRules.length;
-            pendingPolicyRules = null;
-            pendingPolicyNonce = null;
-            pendingPolicyExplanation = null;
+            clearPendingPolicyPreview();
+            clearPendingPolicyClarification();
             logger.info(`Policy activated: ${ruleCount} rule(s)`);
             return port.postMessage({ type: 'policy_activated', ruleCount });
           }
 
           case 'policy_cancel': {
-            pendingPolicyRules = null;
-            pendingPolicyNonce = null;
-            pendingPolicyExplanation = null;
+            clearPendingPolicyPreview();
+            clearPendingPolicyClarification();
             return port.postMessage({ type: 'policy_cancelled' });
           }
 

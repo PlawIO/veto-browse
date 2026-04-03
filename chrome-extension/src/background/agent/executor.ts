@@ -147,27 +147,32 @@ export class Executor {
       verificationFailures.push('final answer still reads like an in-progress plan');
     }
 
-    try {
-      const browserState = await this.context.browserContext.getState(false);
-      if (!browserState.url || browserState.url === 'about:blank') {
-        verificationFailures.push('browser is still on a blank page');
-      }
-
-      const expectedDomain = this.extractExpectedDomain(this.getActiveTask());
-      if (expectedDomain) {
-        try {
-          const currentDomain = new URL(browserState.url).hostname.replace(/^www\./, '').toLowerCase();
-          if (!currentDomain.includes(expectedDomain)) {
-            verificationFailures.push(`expected browser to remain on ${expectedDomain}, but found ${currentDomain}`);
-          }
-        } catch {
-          verificationFailures.push('browser URL could not be verified');
+    // Browser-state checks only apply to web tasks — non-web tasks
+    // (direct answers, policy acknowledgements) have no page to verify.
+    const isWebTask = planOutput.result.web_task !== false;
+    if (isWebTask) {
+      try {
+        const browserState = await this.context.browserContext.getState(false);
+        if (!browserState.url || browserState.url === 'about:blank') {
+          verificationFailures.push('browser is still on a blank page');
         }
+
+        const expectedDomain = this.extractExpectedDomain(this.getActiveTask());
+        if (expectedDomain) {
+          try {
+            const currentDomain = new URL(browserState.url).hostname.replace(/^www\./, '').toLowerCase();
+            if (!currentDomain.includes(expectedDomain)) {
+              verificationFailures.push(`expected browser to remain on ${expectedDomain}, but found ${currentDomain}`);
+            }
+          } catch {
+            verificationFailures.push('browser URL could not be verified');
+          }
+        }
+      } catch (error) {
+        verificationFailures.push(
+          `browser verification failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-    } catch (error) {
-      verificationFailures.push(
-        `browser verification failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
     }
 
     if (verificationFailures.length === 0) {
@@ -255,6 +260,12 @@ export class Executor {
           if (await this.checkTaskCompletion(latestPlanOutput)) {
             break;
           }
+        }
+
+        // Skip Navigator for non-web tasks — the Planner answers directly
+        if (latestPlanOutput?.result?.web_task === false) {
+          logger.info('🔄 Non-web task detected, skipping Navigator');
+          continue;
         }
 
         // Execute navigator

@@ -171,6 +171,13 @@ export interface PolicyPreviewMessage {
   nonce: string;
 }
 
+export interface PolicyClarificationMessage {
+  type: 'policy_clarification';
+  explanation: string;
+  questions: string[];
+  nonce: string;
+}
+
 export interface PolicyActivatedMessage {
   type: 'policy_activated';
   ruleCount: number;
@@ -200,6 +207,7 @@ export type BackgroundToSidePanelMessage =
   | VetoModeChangedMessage
   | PolicyGeneratingMessage
   | PolicyPreviewMessage
+  | PolicyClarificationMessage
   | PolicyActivatedMessage
   | PolicyCancelledMessage
   | TrustSignalMessage;
@@ -275,6 +283,12 @@ export interface PolicyActivateMessage {
   nonce?: string;
 }
 
+export interface PolicyClarificationResponseMessage {
+  type: 'policy_clarification_response';
+  answer: string;
+  nonce?: string;
+}
+
 export interface PolicyCancelMessage {
   type: 'policy_cancel';
 }
@@ -303,6 +317,7 @@ export type SidePanelToBackgroundMessage =
   | ReplayMessage
   | VetoApprovalResponseMessage
   | PolicyActivateMessage
+  | PolicyClarificationResponseMessage
   | PolicyCancelMessage
   | VetoPresetActivateMessage
   | VetoCycleModeMessage;
